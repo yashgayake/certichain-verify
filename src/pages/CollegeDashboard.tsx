@@ -1,7 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Award, 
-  Users, 
   CheckCircle, 
   XCircle, 
   Plus,
@@ -10,7 +9,8 @@ import {
   MoreHorizontal,
   Search,
   Filter,
-  AlertCircle
+  AlertCircle,
+  Loader2
 } from 'lucide-react';
 import Layout from '@/components/layout/Layout';
 import StatsCard from '@/components/common/StatsCard';
@@ -43,29 +43,62 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { useWallet } from '@/contexts/WalletContext';
-import { mockCertificates, mockStats, generateCertificateId, generateTransactionHash } from '@/lib/mockData';
-import { Certificate } from '@/types/certificate';
+import { useBlockchain, BlockchainCertificate } from '@/hooks/useBlockchain';
 import { toast } from 'sonner';
 import { Link } from 'react-router-dom';
 
+// Local certificate type that includes transaction data
+interface IssuedCertificate extends BlockchainCertificate {
+  transactionHash: string;
+  blockNumber: number;
+  status: 'valid' | 'pending';
+  issueDate: string;
+}
+
 const CollegeDashboard: React.FC = () => {
   const { isConnected, address, connect, isConnecting } = useWallet();
-  const [certificates, setCertificates] = useState<Certificate[]>(mockCertificates);
-  const [isIssuing, setIsIssuing] = useState(false);
+  const { issueCertificate, isLoading: blockchainLoading, getAdmin } = useBlockchain();
+  
+  // Store issued certificates in local state (from this session)
+  // In production, you'd fetch these from an indexer or event logs
+  const [issuedCertificates, setIssuedCertificates] = useState<IssuedCertificate[]>([]);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+  const [checkingAdmin, setCheckingAdmin] = useState(true);
 
   const [formData, setFormData] = useState({
     studentName: '',
-    studentWallet: '',
     course: '',
-    degree: '',
     year: new Date().getFullYear().toString(),
+    certificateID: '',
   });
 
-  const filteredCertificates = certificates.filter(cert =>
+  // Check if connected wallet is admin
+  useEffect(() => {
+    const checkAdminStatus = async () => {
+      if (!isConnected || !address) {
+        setCheckingAdmin(false);
+        return;
+      }
+      
+      setCheckingAdmin(true);
+      const adminAddress = await getAdmin();
+      
+      if (adminAddress) {
+        setIsAdmin(adminAddress.toLowerCase() === address.toLowerCase());
+      } else {
+        setIsAdmin(false);
+      }
+      setCheckingAdmin(false);
+    };
+
+    checkAdminStatus();
+  }, [isConnected, address, getAdmin]);
+
+  const filteredCertificates = issuedCertificates.filter(cert =>
     cert.studentName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    cert.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    cert.certificateID.toLowerCase().includes(searchQuery.toLowerCase()) ||
     cert.course.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
@@ -76,52 +109,53 @@ const CollegeDashboard: React.FC = () => {
 
   const handleIssueCertificate = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsIssuing(true);
+    
+    if (!formData.certificateID.trim()) {
+      toast.error('Certificate ID Required', {
+        description: 'Please enter a unique certificate ID',
+      });
+      return;
+    }
 
-    // Simulate blockchain transaction
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    const result = await issueCertificate(
+      formData.studentName,
+      formData.course,
+      parseInt(formData.year),
+      formData.certificateID
+    );
 
-    const newCertificate: Certificate = {
-      id: generateCertificateId(),
-      studentName: formData.studentName,
-      studentWallet: formData.studentWallet || '0x' + Math.random().toString(16).slice(2, 42),
-      course: formData.course,
-      degree: formData.degree,
-      year: formData.year,
-      issueDate: new Date().toISOString().split('T')[0],
-      issuedBy: 'Tech University',
-      issuerWallet: address || '0x0000...0000',
-      status: 'valid',
-      transactionHash: generateTransactionHash(),
-      blockNumber: 18300000 + Math.floor(Math.random() * 10000),
-      timestamp: Date.now() / 1000,
-    };
+    if (result.success && result.transactionHash && result.blockNumber) {
+      const newCertificate: IssuedCertificate = {
+        studentName: formData.studentName,
+        course: formData.course,
+        year: parseInt(formData.year),
+        certificateID: formData.certificateID,
+        issuer: address || '',
+        transactionHash: result.transactionHash,
+        blockNumber: result.blockNumber,
+        status: 'valid',
+        issueDate: new Date().toISOString().split('T')[0],
+      };
 
-    setCertificates(prev => [newCertificate, ...prev]);
-    setFormData({
-      studentName: '',
-      studentWallet: '',
-      course: '',
-      degree: '',
-      year: new Date().getFullYear().toString(),
-    });
-    setIsIssuing(false);
-    setIsDialogOpen(false);
+      setIssuedCertificates(prev => [newCertificate, ...prev]);
+      setFormData({
+        studentName: '',
+        course: '',
+        year: new Date().getFullYear().toString(),
+        certificateID: '',
+      });
+      setIsDialogOpen(false);
 
-    toast.success('Certificate Issued Successfully', {
-      description: `Certificate ID: ${newCertificate.id}`,
-    });
+      toast.success('Certificate Issued on Blockchain!', {
+        description: `TX: ${result.transactionHash.slice(0, 10)}...`,
+      });
+    }
   };
 
-  const handleRevokeCertificate = (certId: string) => {
-    setCertificates(prev =>
-      prev.map(cert =>
-        cert.id === certId ? { ...cert, status: 'revoked' as const } : cert
-      )
-    );
-    toast.success('Certificate Revoked', {
-      description: `Certificate ${certId} has been marked as revoked.`,
-    });
+  // Calculate stats from actual issued certificates
+  const stats = {
+    totalCertificates: issuedCertificates.length,
+    validCertificates: issuedCertificates.filter(c => c.status === 'valid').length,
   };
 
   if (!isConnected) {
@@ -158,6 +192,19 @@ const CollegeDashboard: React.FC = () => {
     );
   }
 
+  if (checkingAdmin) {
+    return (
+      <Layout>
+        <div className="min-h-[80vh] flex items-center justify-center">
+          <div className="text-center">
+            <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-primary" />
+            <p className="text-muted-foreground">Checking admin status...</p>
+          </div>
+        </div>
+      </Layout>
+    );
+  }
+
   return (
     <Layout>
       <div className="container mx-auto px-4 py-8">
@@ -166,12 +213,21 @@ const CollegeDashboard: React.FC = () => {
           <div>
             <h1 className="text-3xl font-bold mb-2">College Dashboard</h1>
             <p className="text-muted-foreground">
-              Manage and issue blockchain-verified certificates
+              Issue blockchain-verified certificates
             </p>
+            <div className="flex items-center gap-2 mt-2">
+              <div className="w-2 h-2 rounded-full bg-success animate-pulse" />
+              <span className="text-sm font-mono text-muted-foreground">
+                {address?.slice(0, 6)}...{address?.slice(-4)}
+              </span>
+              {isAdmin && (
+                <Badge variant="valid" className="ml-2">Admin</Badge>
+              )}
+            </div>
           </div>
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
-              <Button variant="gradient" size="lg">
+              <Button variant="gradient" size="lg" disabled={!isAdmin}>
                 <Plus className="w-5 h-5" />
                 Issue Certificate
               </Button>
@@ -180,12 +236,26 @@ const CollegeDashboard: React.FC = () => {
               <DialogHeader>
                 <DialogTitle>Issue New Certificate</DialogTitle>
                 <DialogDescription>
-                  Fill in the details to issue a new blockchain certificate.
+                  This will create a permanent record on the Ethereum blockchain.
                 </DialogDescription>
               </DialogHeader>
               <form onSubmit={handleIssueCertificate} className="space-y-4 mt-4">
                 <div>
-                  <Label htmlFor="studentName">Student Name</Label>
+                  <Label htmlFor="certificateID">Certificate ID *</Label>
+                  <Input
+                    id="certificateID"
+                    name="certificateID"
+                    value={formData.certificateID}
+                    onChange={handleInputChange}
+                    placeholder="CERT-2024-001"
+                    required
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Unique identifier for this certificate
+                  </p>
+                </div>
+                <div>
+                  <Label htmlFor="studentName">Student Name *</Label>
                   <Input
                     id="studentName"
                     name="studentName"
@@ -196,17 +266,7 @@ const CollegeDashboard: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <Label htmlFor="studentWallet">Student Wallet (Optional)</Label>
-                  <Input
-                    id="studentWallet"
-                    name="studentWallet"
-                    value={formData.studentWallet}
-                    onChange={handleInputChange}
-                    placeholder="0x..."
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="course">Course</Label>
+                  <Label htmlFor="course">Course *</Label>
                   <Input
                     id="course"
                     name="course"
@@ -217,18 +277,7 @@ const CollegeDashboard: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <Label htmlFor="degree">Degree</Label>
-                  <Input
-                    id="degree"
-                    name="degree"
-                    value={formData.degree}
-                    onChange={handleInputChange}
-                    placeholder="Bachelor of Technology"
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="year">Year</Label>
+                  <Label htmlFor="year">Year *</Label>
                   <Input
                     id="year"
                     name="year"
@@ -242,17 +291,17 @@ const CollegeDashboard: React.FC = () => {
                   type="submit" 
                   variant="gradient" 
                   className="w-full"
-                  disabled={isIssuing}
+                  disabled={blockchainLoading}
                 >
-                  {isIssuing ? (
+                  {blockchainLoading ? (
                     <>
-                      <LoadingSpinner size="sm" />
-                      Issuing on Blockchain...
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Waiting for Blockchain...
                     </>
                   ) : (
                     <>
                       <Award className="w-4 h-4" />
-                      Issue Certificate
+                      Issue on Blockchain
                     </>
                   )}
                 </Button>
@@ -261,31 +310,33 @@ const CollegeDashboard: React.FC = () => {
           </Dialog>
         </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        {/* Admin Warning */}
+        {!isAdmin && (
+          <div className="mb-8 p-4 rounded-xl bg-warning/10 border border-warning/30">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-warning shrink-0 mt-0.5" />
+              <div>
+                <p className="font-medium text-warning">Not Contract Admin</p>
+                <p className="text-sm text-muted-foreground">
+                  Your connected wallet is not the contract admin. Only the admin can issue certificates.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Stats - Based on actual issued certificates */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
           <StatsCard
-            title="Total Certificates"
-            value={mockStats.totalCertificates}
+            title="Certificates Issued (This Session)"
+            value={stats.totalCertificates}
             icon={Award}
-            trend={{ value: 12, isPositive: true }}
-          />
-          <StatsCard
-            title="Total Students"
-            value={mockStats.totalStudents}
-            icon={Users}
-            trend={{ value: 8, isPositive: true }}
           />
           <StatsCard
             title="Valid Certificates"
-            value={mockStats.validCertificates}
+            value={stats.validCertificates}
             icon={CheckCircle}
             iconClassName="bg-success/10"
-          />
-          <StatsCard
-            title="Revoked Certificates"
-            value={mockStats.revokedCertificates}
-            icon={XCircle}
-            iconClassName="bg-destructive/10"
           />
         </div>
 
@@ -293,7 +344,7 @@ const CollegeDashboard: React.FC = () => {
         <div className="rounded-2xl border border-border/50 bg-card shadow-lg overflow-hidden">
           {/* Table Header */}
           <div className="p-4 border-b border-border/50 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-            <h2 className="text-lg font-semibold">Issued Certificates</h2>
+            <h2 className="text-lg font-semibold">Issued Certificates (This Session)</h2>
             <div className="flex items-center gap-2 w-full sm:w-auto">
               <div className="relative flex-1 sm:w-64">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -314,12 +365,15 @@ const CollegeDashboard: React.FC = () => {
           {filteredCertificates.length === 0 ? (
             <EmptyState
               icon={Award}
-              title="No Certificates Found"
-              description="Issue your first certificate or try a different search query."
-              action={{
+              title="No Certificates Issued Yet"
+              description={isAdmin 
+                ? "Issue your first certificate to see it here. Certificates are stored permanently on the blockchain."
+                : "Only the contract admin can issue certificates."
+              }
+              action={isAdmin ? {
                 label: 'Issue Certificate',
                 onClick: () => setIsDialogOpen(true),
-              }}
+              } : undefined}
             />
           ) : (
             <div className="overflow-x-auto">
@@ -336,14 +390,14 @@ const CollegeDashboard: React.FC = () => {
                 </TableHeader>
                 <TableBody>
                   {filteredCertificates.map((cert) => (
-                    <TableRow key={cert.id}>
-                      <TableCell className="font-mono text-sm">{cert.id}</TableCell>
+                    <TableRow key={cert.certificateID}>
+                      <TableCell className="font-mono text-sm">{cert.certificateID}</TableCell>
                       <TableCell className="font-medium">{cert.studentName}</TableCell>
                       <TableCell className="hidden md:table-cell">{cert.course}</TableCell>
                       <TableCell className="hidden lg:table-cell">{cert.year}</TableCell>
                       <TableCell>
-                        <Badge variant={cert.status === 'valid' ? 'valid' : cert.status === 'revoked' ? 'revoked' : 'pending'}>
-                          {cert.status}
+                        <Badge variant="valid">
+                          On Blockchain
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right">
@@ -355,24 +409,21 @@ const CollegeDashboard: React.FC = () => {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem asChild>
-                              <Link to={`/certificate/${cert.id}`}>
+                              <Link to={`/verify?id=${cert.certificateID}`}>
                                 <Eye className="w-4 h-4 mr-2" />
-                                View Details
+                                Verify
                               </Link>
                             </DropdownMenuItem>
-                            <DropdownMenuItem>
-                              <QrCode className="w-4 h-4 mr-2" />
-                              Generate QR
-                            </DropdownMenuItem>
-                            {cert.status === 'valid' && (
-                              <DropdownMenuItem 
-                                className="text-destructive"
-                                onClick={() => handleRevokeCertificate(cert.id)}
+                            <DropdownMenuItem asChild>
+                              <a 
+                                href={`https://sepolia.etherscan.io/tx/${cert.transactionHash}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
                               >
-                                <XCircle className="w-4 h-4 mr-2" />
-                                Revoke
-                              </DropdownMenuItem>
-                            )}
+                                <QrCode className="w-4 h-4 mr-2" />
+                                View on Etherscan
+                              </a>
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
@@ -382,6 +433,15 @@ const CollegeDashboard: React.FC = () => {
               </Table>
             </div>
           )}
+        </div>
+
+        {/* Info Banner */}
+        <div className="mt-8 p-4 rounded-xl bg-muted/50 border border-border/50">
+          <p className="text-sm text-muted-foreground">
+            <strong>Note:</strong> This dashboard shows certificates issued in your current session. 
+            To verify any certificate, use the Verify page with the certificate ID.
+            All certificates are permanently stored on the Ethereum blockchain.
+          </p>
         </div>
       </div>
     </Layout>

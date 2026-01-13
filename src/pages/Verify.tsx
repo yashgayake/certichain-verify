@@ -1,20 +1,36 @@
-import React, { useState } from 'react';
-import { Search, QrCode, Camera, ExternalLink, Building2, Calendar, GraduationCap, Fingerprint } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { Search, QrCode, Camera, Fingerprint, Loader2, ExternalLink } from 'lucide-react';
 import Layout from '@/components/layout/Layout';
 import AnimatedVerificationResult from '@/components/verify/AnimatedVerificationResult';
 import QRScanner from '@/components/verify/QRScanner';
-import TransactionViewer from '@/components/blockchain/TransactionViewer';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { mockCertificates } from '@/lib/mockData';
-import { Certificate } from '@/types/certificate';
+import { useBlockchain, BlockchainCertificate } from '@/hooks/useBlockchain';
+
+interface VerificationState {
+  isValid: boolean;
+  certificate?: BlockchainCertificate;
+  message: string;
+}
 
 const Verify: React.FC = () => {
+  const [searchParams] = useSearchParams();
   const [certificateId, setCertificateId] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
-  const [result, setResult] = useState<{ success: boolean; certificate?: Certificate; message: string } | null>(null);
+  const [result, setResult] = useState<VerificationState | null>(null);
+  
+  const { verifyCertificate, getCertificate } = useBlockchain();
+
+  // Check URL for certificate ID on mount
+  useEffect(() => {
+    const idFromUrl = searchParams.get('id');
+    if (idFromUrl) {
+      setCertificateId(idFromUrl);
+      handleVerify(idFromUrl);
+    }
+  }, [searchParams]);
 
   const handleVerify = async (id?: string) => {
     const searchId = id || certificateId;
@@ -22,21 +38,41 @@ const Verify: React.FC = () => {
 
     setIsVerifying(true);
     setResult(null);
-    await new Promise(resolve => setTimeout(resolve, 2500));
 
-    const foundCert = mockCertificates.find(c => c.id.toLowerCase() === searchId.trim().toLowerCase());
+    try {
+      // Call smart contract verifyCertificate function
+      const isValid = await verifyCertificate(searchId.trim());
 
-    if (foundCert) {
+      if (isValid) {
+        // Certificate exists, get full details
+        const certResult = await getCertificate(searchId.trim());
+        
+        if (certResult.isValid && certResult.certificate) {
+          setResult({
+            isValid: true,
+            certificate: certResult.certificate,
+            message: 'Certificate is VALID and verified on the Ethereum blockchain.',
+          });
+        } else {
+          setResult({
+            isValid: false,
+            message: 'Certificate data could not be retrieved.',
+          });
+        }
+      } else {
+        setResult({
+          isValid: false,
+          message: 'Certificate NOT FOUND on blockchain. This may be a fake or invalid certificate.',
+        });
+      }
+    } catch (error) {
+      console.error('Verification error:', error);
       setResult({
-        success: foundCert.status !== 'revoked',
-        certificate: foundCert,
-        message: foundCert.status === 'revoked' 
-          ? 'This certificate has been REVOKED by the issuing authority.'
-          : 'Certificate is VALID and verified on blockchain.',
+        isValid: false,
+        message: 'Error verifying certificate. Please ensure MetaMask is connected.',
       });
-    } else {
-      setResult({ success: false, message: 'Certificate NOT FOUND. This may be a fake or invalid certificate.' });
     }
+
     setIsVerifying(false);
   };
 
@@ -52,11 +88,11 @@ const Verify: React.FC = () => {
         <div className="max-w-3xl mx-auto text-center mb-12">
           <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 border border-primary/20 mb-6">
             <Fingerprint className="w-4 h-4 text-primary" />
-            <span className="text-sm font-medium text-primary">Blockchain Verification</span>
+            <span className="text-sm font-medium text-primary">Real Blockchain Verification</span>
           </div>
           <h1 className="text-3xl md:text-4xl font-bold mb-4">Verify Certificate Authenticity</h1>
           <p className="text-lg text-muted-foreground">
-            Enter a certificate ID or scan a QR code to instantly verify authenticity.
+            Enter a certificate ID to verify directly on the Ethereum blockchain.
           </p>
         </div>
 
@@ -72,8 +108,17 @@ const Verify: React.FC = () => {
                 className="h-14 pl-12 text-lg rounded-xl"
               />
             </div>
-            <Button type="submit" variant="gradient" size="xl" disabled={isVerifying || !certificateId.trim()}>
-              <Search className="w-5 h-5" />
+            <Button 
+              type="submit" 
+              variant="gradient" 
+              size="xl" 
+              disabled={isVerifying || !certificateId.trim()}
+            >
+              {isVerifying ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <Search className="w-5 h-5" />
+              )}
               Verify
             </Button>
           </form>
@@ -86,57 +131,71 @@ const Verify: React.FC = () => {
             </Button>
           </div>
 
-          {/* Quick Demo */}
+          {/* Info Box */}
           <div className="mt-8 p-4 rounded-xl bg-muted/50 border border-border/50">
-            <p className="text-sm text-muted-foreground mb-3">Try with sample certificates:</p>
-            <div className="flex flex-wrap gap-2">
-              {mockCertificates.slice(0, 3).map(cert => (
-                <Button key={cert.id} variant="outline" size="sm" onClick={() => { setCertificateId(cert.id); handleVerify(cert.id); }} className="font-mono text-xs">
-                  {cert.id}
-                  {cert.status === 'revoked' && <Badge variant="revoked" className="ml-2 text-[10px]">Revoked</Badge>}
-                </Button>
-              ))}
-            </div>
+            <p className="text-sm text-muted-foreground">
+              <strong>How it works:</strong> This page calls the <code className="text-primary">verifyCertificate()</code> function 
+              on the Ethereum smart contract to check if the certificate exists on the blockchain.
+            </p>
           </div>
         </div>
 
         {/* Loading / Result */}
         <div className="max-w-2xl mx-auto">
-          {isVerifying && <AnimatedVerificationResult success={false} isLoading />}
+          {isVerifying && (
+            <div className="text-center py-12">
+              <Loader2 className="w-12 h-12 animate-spin mx-auto mb-4 text-primary" />
+              <p className="text-lg font-medium">Querying Blockchain...</p>
+              <p className="text-sm text-muted-foreground">
+                Calling verifyCertificate() on smart contract
+              </p>
+            </div>
+          )}
           
           {result && !isVerifying && (
             <div className="space-y-6 animate-fade-in">
-              <AnimatedVerificationResult success={result.success} title={result.success ? 'VALID CERTIFICATE' : 'VERIFICATION FAILED'} message={result.message} />
+              <AnimatedVerificationResult 
+                success={result.isValid} 
+                title={result.isValid ? 'VALID CERTIFICATE' : 'VERIFICATION FAILED'} 
+                message={result.message} 
+              />
               
               {result.certificate && (
-                <div className="grid md:grid-cols-2 gap-4 p-6 rounded-2xl bg-card border border-border/50">
-                  {[
-                    { icon: GraduationCap, label: 'Student', value: result.certificate.studentName },
-                    { icon: Building2, label: 'Issuer', value: result.certificate.issuedBy },
-                    { icon: Fingerprint, label: 'Course', value: result.certificate.course },
-                    { icon: Calendar, label: 'Issued', value: result.certificate.issueDate },
-                  ].map((item) => (
-                    <div key={item.label} className="flex items-start gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                        <item.icon className="w-5 h-5 text-primary" />
-                      </div>
-                      <div>
-                        <p className="text-sm text-muted-foreground">{item.label}</p>
-                        <p className="font-semibold">{item.value}</p>
-                      </div>
+                <div className="p-6 rounded-2xl bg-card border border-border/50">
+                  <h3 className="text-lg font-semibold mb-4">Certificate Details (From Blockchain)</h3>
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-sm text-muted-foreground">Certificate ID</p>
+                      <p className="font-mono font-semibold">{result.certificate.certificateID}</p>
                     </div>
-                  ))}
+                    <div>
+                      <p className="text-sm text-muted-foreground">Student Name</p>
+                      <p className="font-semibold">{result.certificate.studentName}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Course</p>
+                      <p className="font-semibold">{result.certificate.course}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Year</p>
+                      <p className="font-semibold">{result.certificate.year}</p>
+                    </div>
+                    <div className="md:col-span-2">
+                      <p className="text-sm text-muted-foreground">Issuer Address</p>
+                      <p className="font-mono text-sm break-all">{result.certificate.issuer}</p>
+                    </div>
+                  </div>
                 </div>
               )}
-
-              {result.certificate && <TransactionViewer certificate={result.certificate} />}
               
               <div className="flex justify-center gap-4">
-                <Button variant="outline" onClick={() => { setCertificateId(''); setResult(null); }}>Verify Another</Button>
-                {result.certificate && result.success && (
+                <Button variant="outline" onClick={() => { setCertificateId(''); setResult(null); }}>
+                  Verify Another
+                </Button>
+                {result.isValid && (
                   <Button variant="gradient">
                     <QrCode className="w-4 h-4 mr-2" />
-                    Download Proof
+                    Generate Proof
                   </Button>
                 )}
               </div>
