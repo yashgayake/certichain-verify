@@ -3,13 +3,29 @@ import { ethers, BrowserProvider, Contract } from 'ethers';
 import { CONTRACT_ADDRESS, CONTRACT_ABI } from '@/contract';
 import { toast } from 'sonner';
 
-// Types for blockchain certificate data
+// Types for blockchain data
 export interface BlockchainCertificate {
+  certificateHash: string;
   studentName: string;
   course: string;
+  grade: string;
   year: number;
-  certificateID: string;
+  enrollmentNumber: string;
   issuer: string;
+  issuedAt: number;
+  pdfHash: string;
+  photoHash: string;
+  isValid: boolean;
+}
+
+export interface BlockchainStudent {
+  enrollmentNumber: string;
+  name: string;
+  email: string;
+  phone: string;
+  photoHash: string;
+  isRegistered: boolean;
+  registeredAt: number;
 }
 
 export interface TransactionResult {
@@ -54,12 +70,15 @@ export const useBlockchain = () => {
     return new Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
   }, [getProviderAndSigner]);
 
-  // Issue a new certificate (calls addCertificate on smart contract)
-  const issueCertificate = useCallback(async (
-    studentName: string,
-    course: string,
-    year: number,
-    certificateID: string
+  // ============ ADMIN FUNCTIONS ============
+
+  // Register a new student
+  const registerStudent = useCallback(async (
+    enrollmentNumber: string,
+    name: string,
+    email: string,
+    phone: string,
+    photoHash: string
   ): Promise<TransactionResult> => {
     setIsLoading(true);
     setError(null);
@@ -71,14 +90,12 @@ export const useBlockchain = () => {
         description: 'Please confirm the transaction in MetaMask',
       });
 
-      // Call addCertificate function on smart contract
-      const tx = await contract.addCertificate(studentName, course, year, certificateID);
+      const tx = await contract.registerStudent(enrollmentNumber, name, email, phone, photoHash);
       
       toast.info('Transaction Submitted', {
         description: `Hash: ${tx.hash.slice(0, 10)}...${tx.hash.slice(-8)}`,
       });
 
-      // Wait for transaction confirmation
       const receipt = await tx.wait();
       
       setIsLoading(false);
@@ -93,33 +110,88 @@ export const useBlockchain = () => {
       setError(errorMessage);
       setIsLoading(false);
       
-      // Handle user rejection
       const ethError = err as { code?: number | string };
       if (ethError.code === 4001 || ethError.code === 'ACTION_REJECTED') {
-        toast.error('Transaction Rejected', {
-          description: 'You rejected the transaction in MetaMask',
-        });
+        toast.error('Transaction Rejected');
       } else {
-        toast.error('Transaction Failed', {
-          description: errorMessage,
-        });
+        toast.error('Transaction Failed', { description: errorMessage });
       }
       
-      return {
-        success: false,
-        error: errorMessage,
-      };
+      return { success: false, error: errorMessage };
     }
   }, [getContract]);
 
-  // Verify a certificate (calls verifyCertificate on smart contract)
-  const verifyCertificate = useCallback(async (certificateID: string): Promise<boolean> => {
+  // Issue a new certificate
+  const issueCertificate = useCallback(async (
+    certificateHash: string,
+    enrollmentNumber: string,
+    studentName: string,
+    course: string,
+    grade: string,
+    year: number,
+    pdfHash: string,
+    photoHash: string
+  ): Promise<TransactionResult> => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const contract = await getContract();
+      
+      toast.info('Awaiting MetaMask Confirmation...', {
+        description: 'Please confirm the transaction in MetaMask',
+      });
+
+      const tx = await contract.issueCertificate(
+        certificateHash,
+        enrollmentNumber,
+        studentName,
+        course,
+        grade,
+        year,
+        pdfHash,
+        photoHash
+      );
+      
+      toast.info('Transaction Submitted', {
+        description: `Hash: ${tx.hash.slice(0, 10)}...${tx.hash.slice(-8)}`,
+      });
+
+      const receipt = await tx.wait();
+      
+      setIsLoading(false);
+      
+      return {
+        success: true,
+        transactionHash: receipt.hash,
+        blockNumber: receipt.blockNumber,
+      };
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Transaction failed';
+      setError(errorMessage);
+      setIsLoading(false);
+      
+      const ethError = err as { code?: number | string };
+      if (ethError.code === 4001 || ethError.code === 'ACTION_REJECTED') {
+        toast.error('Transaction Rejected');
+      } else {
+        toast.error('Transaction Failed', { description: errorMessage });
+      }
+      
+      return { success: false, error: errorMessage };
+    }
+  }, [getContract]);
+
+  // ============ VIEW FUNCTIONS ============
+
+  // Verify a certificate
+  const verifyCertificate = useCallback(async (certificateHash: string): Promise<boolean> => {
     setIsLoading(true);
     setError(null);
 
     try {
       const contract = await getReadOnlyContract();
-      const isValid = await contract.verifyCertificate(certificateID);
+      const isValid = await contract.verifyCertificate(certificateHash);
       setIsLoading(false);
       return isValid;
     } catch (err: unknown) {
@@ -130,49 +202,160 @@ export const useBlockchain = () => {
     }
   }, [getReadOnlyContract]);
 
-  // Get certificate details (calls getCertificate on smart contract)
-  const getCertificate = useCallback(async (certificateID: string): Promise<VerificationResult> => {
+  // Get certificate details
+  const getCertificate = useCallback(async (certificateHash: string): Promise<VerificationResult> => {
     setIsLoading(true);
     setError(null);
 
     try {
       const contract = await getReadOnlyContract();
       
-      // First check if certificate exists
-      const isValid = await contract.verifyCertificate(certificateID);
+      const isValid = await contract.verifyCertificate(certificateHash);
       
       if (!isValid) {
         setIsLoading(false);
-        return {
-          isValid: false,
-          error: 'Certificate not found on blockchain',
-        };
+        return { isValid: false, error: 'Certificate not found on blockchain' };
       }
 
-      // Get certificate details
-      const result = await contract.getCertificate(certificateID);
+      const result = await contract.getCertificate(certificateHash);
       
       const certificate: BlockchainCertificate = {
+        certificateHash,
         studentName: result[0],
         course: result[1],
-        year: Number(result[2]),
-        certificateID: result[3],
-        issuer: result[4],
+        grade: result[2],
+        year: Number(result[3]),
+        enrollmentNumber: result[4],
+        issuer: result[5],
+        issuedAt: Number(result[6]),
+        pdfHash: result[7],
+        photoHash: result[8],
+        isValid: result[9],
       };
 
       setIsLoading(false);
-      return {
-        isValid: true,
-        certificate,
-      };
+      return { isValid: true, certificate };
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to fetch certificate';
       setError(errorMessage);
       setIsLoading(false);
+      return { isValid: false, error: errorMessage };
+    }
+  }, [getReadOnlyContract]);
+
+  // Get student details
+  const getStudent = useCallback(async (enrollmentNumber: string): Promise<BlockchainStudent | null> => {
+    try {
+      const contract = await getReadOnlyContract();
+      const result = await contract.getStudent(enrollmentNumber);
+      
+      if (!result[4]) { // isRegistered check
+        return null;
+      }
+
       return {
-        isValid: false,
-        error: errorMessage,
+        enrollmentNumber,
+        name: result[0],
+        email: result[1],
+        phone: result[2],
+        photoHash: result[3],
+        isRegistered: result[4],
+        registeredAt: Number(result[5]),
       };
+    } catch {
+      return null;
+    }
+  }, [getReadOnlyContract]);
+
+  // Authenticate student
+  const authenticateStudent = useCallback(async (
+    enrollmentNumber: string,
+    password: string
+  ): Promise<boolean> => {
+    try {
+      const contract = await getReadOnlyContract();
+      const isAuthenticated = await contract.authenticateStudent(enrollmentNumber, password);
+      return isAuthenticated;
+    } catch {
+      return false;
+    }
+  }, [getReadOnlyContract]);
+
+  // Get student's certificates
+  const getStudentCertificates = useCallback(async (enrollmentNumber: string): Promise<string[]> => {
+    try {
+      const contract = await getReadOnlyContract();
+      const certificateHashes = await contract.getStudentCertificates(enrollmentNumber);
+      return certificateHashes;
+    } catch {
+      return [];
+    }
+  }, [getReadOnlyContract]);
+
+  // Check if student is registered
+  const isStudentRegistered = useCallback(async (enrollmentNumber: string): Promise<boolean> => {
+    try {
+      const contract = await getReadOnlyContract();
+      return await contract.isStudentRegistered(enrollmentNumber);
+    } catch {
+      return false;
+    }
+  }, [getReadOnlyContract]);
+
+  // Get all certificates (for admin)
+  const getAllCertificates = useCallback(async (): Promise<BlockchainCertificate[]> => {
+    try {
+      const contract = await getReadOnlyContract();
+      const hashes = await contract.getAllCertificateHashes();
+      
+      const certificates: BlockchainCertificate[] = [];
+      for (const hash of hashes) {
+        const result = await getCertificate(hash);
+        if (result.certificate) {
+          certificates.push(result.certificate);
+        }
+      }
+      
+      return certificates;
+    } catch {
+      return [];
+    }
+  }, [getReadOnlyContract, getCertificate]);
+
+  // Get all students (for admin)
+  const getAllStudents = useCallback(async (): Promise<BlockchainStudent[]> => {
+    try {
+      const contract = await getReadOnlyContract();
+      const enrollments = await contract.getAllEnrollmentNumbers();
+      
+      const students: BlockchainStudent[] = [];
+      for (const enrollment of enrollments) {
+        const student = await getStudent(enrollment);
+        if (student) {
+          students.push(student);
+        }
+      }
+      
+      return students;
+    } catch {
+      return [];
+    }
+  }, [getReadOnlyContract, getStudent]);
+
+  // Get blockchain stats
+  const getStats = useCallback(async (): Promise<{ totalCertificates: number; totalStudents: number }> => {
+    try {
+      const contract = await getReadOnlyContract();
+      const [totalCertificates, totalStudents] = await Promise.all([
+        contract.getTotalCertificates(),
+        contract.getTotalStudents(),
+      ]);
+      return {
+        totalCertificates: Number(totalCertificates),
+        totalStudents: Number(totalStudents),
+      };
+    } catch {
+      return { totalCertificates: 0, totalStudents: 0 };
     }
   }, [getReadOnlyContract]);
 
@@ -182,8 +365,8 @@ export const useBlockchain = () => {
       const contract = await getReadOnlyContract();
       const adminAddress = await contract.admin();
       return adminAddress;
-    } catch (err) {
-      console.error('Failed to get admin:', err);
+    } catch {
+      console.error('Failed to get admin');
       return null;
     }
   }, [getReadOnlyContract]);
@@ -191,9 +374,19 @@ export const useBlockchain = () => {
   return {
     isLoading,
     error,
+    // Admin functions
+    registerStudent,
     issueCertificate,
+    // View functions
     verifyCertificate,
     getCertificate,
+    getStudent,
+    authenticateStudent,
+    getStudentCertificates,
+    isStudentRegistered,
+    getAllCertificates,
+    getAllStudents,
+    getStats,
     getAdmin,
   };
 };
