@@ -70,8 +70,12 @@ const CollegeDashboard: React.FC = () => {
   const [formData, setFormData] = useState({
     studentName: '',
     course: '',
+    grade: '',
     year: new Date().getFullYear().toString(),
-    certificateID: '',
+    certificateHash: '',
+    enrollmentNumber: '',
+    pdfHash: '',
+    photoHash: '',
   });
 
   // Check if connected wallet is admin
@@ -98,7 +102,7 @@ const CollegeDashboard: React.FC = () => {
 
   const filteredCertificates = issuedCertificates.filter(cert =>
     cert.studentName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    cert.certificateID.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    cert.certificateHash.toLowerCase().includes(searchQuery.toLowerCase()) ||
     cert.course.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
@@ -110,27 +114,44 @@ const CollegeDashboard: React.FC = () => {
   const handleIssueCertificate = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!formData.certificateID.trim()) {
-      toast.error('Certificate ID Required', {
-        description: 'Please enter a unique certificate ID',
+    if (!formData.certificateHash.trim()) {
+      toast.error('Certificate Hash Required', {
+        description: 'Please enter a unique certificate hash',
+      });
+      return;
+    }
+
+    if (!formData.enrollmentNumber.trim()) {
+      toast.error('Enrollment Number Required', {
+        description: 'Please enter the student enrollment number',
       });
       return;
     }
 
     const result = await issueCertificate(
+      formData.certificateHash,
+      formData.enrollmentNumber,
       formData.studentName,
       formData.course,
+      formData.grade,
       parseInt(formData.year),
-      formData.certificateID
+      formData.pdfHash || '',
+      formData.photoHash || ''
     );
 
     if (result.success && result.transactionHash && result.blockNumber) {
       const newCertificate: IssuedCertificate = {
+        certificateHash: formData.certificateHash,
         studentName: formData.studentName,
         course: formData.course,
+        grade: formData.grade,
         year: parseInt(formData.year),
-        certificateID: formData.certificateID,
+        enrollmentNumber: formData.enrollmentNumber,
         issuer: address || '',
+        issuedAt: Date.now(),
+        pdfHash: formData.pdfHash,
+        photoHash: formData.photoHash,
+        isValid: true,
         transactionHash: result.transactionHash,
         blockNumber: result.blockNumber,
         status: 'valid',
@@ -141,8 +162,12 @@ const CollegeDashboard: React.FC = () => {
       setFormData({
         studentName: '',
         course: '',
+        grade: '',
         year: new Date().getFullYear().toString(),
-        certificateID: '',
+        certificateHash: '',
+        enrollmentNumber: '',
+        pdfHash: '',
+        photoHash: '',
       });
       setIsDialogOpen(false);
 
@@ -241,18 +266,29 @@ const CollegeDashboard: React.FC = () => {
               </DialogHeader>
               <form onSubmit={handleIssueCertificate} className="space-y-4 mt-4">
                 <div>
-                  <Label htmlFor="certificateID">Certificate ID *</Label>
+                  <Label htmlFor="certificateHash">Certificate Hash *</Label>
                   <Input
-                    id="certificateID"
-                    name="certificateID"
-                    value={formData.certificateID}
+                    id="certificateHash"
+                    name="certificateHash"
+                    value={formData.certificateHash}
                     onChange={handleInputChange}
                     placeholder="CERT-2024-001"
                     required
                   />
                   <p className="text-xs text-muted-foreground mt-1">
-                    Unique identifier for this certificate
+                    Unique hash for this certificate
                   </p>
+                </div>
+                <div>
+                  <Label htmlFor="enrollmentNumber">Enrollment Number *</Label>
+                  <Input
+                    id="enrollmentNumber"
+                    name="enrollmentNumber"
+                    value={formData.enrollmentNumber}
+                    onChange={handleInputChange}
+                    placeholder="ENR-2024-001"
+                    required
+                  />
                 </div>
                 <div>
                   <Label htmlFor="studentName">Student Name *</Label>
@@ -274,6 +310,16 @@ const CollegeDashboard: React.FC = () => {
                     onChange={handleInputChange}
                     placeholder="Computer Science"
                     required
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="grade">Grade</Label>
+                  <Input
+                    id="grade"
+                    name="grade"
+                    value={formData.grade}
+                    onChange={handleInputChange}
+                    placeholder="A+"
                   />
                 </div>
                 <div>
@@ -390,8 +436,8 @@ const CollegeDashboard: React.FC = () => {
                 </TableHeader>
                 <TableBody>
                   {filteredCertificates.map((cert) => (
-                    <TableRow key={cert.certificateID}>
-                      <TableCell className="font-mono text-sm">{cert.certificateID}</TableCell>
+                    <TableRow key={cert.certificateHash}>
+                      <TableCell className="font-mono text-sm">{cert.certificateHash}</TableCell>
                       <TableCell className="font-medium">{cert.studentName}</TableCell>
                       <TableCell className="hidden md:table-cell">{cert.course}</TableCell>
                       <TableCell className="hidden lg:table-cell">{cert.year}</TableCell>
@@ -409,7 +455,7 @@ const CollegeDashboard: React.FC = () => {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem asChild>
-                              <Link to={`/verify?id=${cert.certificateID}`}>
+                              <Link to={`/verify?id=${cert.certificateHash}`}>
                                 <Eye className="w-4 h-4 mr-2" />
                                 Verify
                               </Link>

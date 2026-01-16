@@ -147,9 +147,9 @@ const CertificateDetail: React.FC = () => {
               </div>
 
               <div className="pt-6 border-t border-border/50">
-                <p className="text-sm text-muted-foreground uppercase tracking-wide">Certificate ID</p>
+                <p className="text-sm text-muted-foreground uppercase tracking-wide">Certificate Hash</p>
                 <p className="font-mono text-lg mt-1">
-                  {certificate.certificateID}
+                  {certificate.certificateHash}
                 </p>
               </div>
 
