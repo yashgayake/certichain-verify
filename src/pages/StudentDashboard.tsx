@@ -22,7 +22,7 @@ import { useBlockchain, BlockchainCertificate } from '@/hooks/useBlockchain';
 import { toast } from 'sonner';
 
 interface DisplayCertificate extends BlockchainCertificate {
-  isValid: boolean;
+  verified: boolean;
 }
 
 const StudentDashboard: React.FC = () => {
@@ -34,23 +34,23 @@ const StudentDashboard: React.FC = () => {
   const [certificates, setCertificates] = useState<DisplayCertificate[]>([]);
   const [isSearching, setIsSearching] = useState(false);
 
-  const handleCopyLink = (certId: string) => {
-    navigator.clipboard.writeText(`${window.location.origin}/verify?id=${certId}`);
-    setCopiedId(certId);
+  const handleCopyLink = (certHash: string) => {
+    navigator.clipboard.writeText(`${window.location.origin}/verify?id=${certHash}`);
+    setCopiedId(certHash);
     toast.success('Verification link copied to clipboard');
     setTimeout(() => setCopiedId(null), 2000);
   };
 
   const handleAddCertificate = useCallback(async () => {
     if (!searchId.trim()) {
-      toast.error('Enter Certificate ID', {
-        description: 'Please enter a certificate ID to search',
+      toast.error('Enter Certificate Hash', {
+        description: 'Please enter a certificate hash to search',
       });
       return;
     }
 
     // Check if already added
-    if (certificates.some(c => c.certificateID.toLowerCase() === searchId.toLowerCase())) {
+    if (certificates.some(c => c.certificateHash.toLowerCase() === searchId.toLowerCase())) {
       toast.info('Already Added', {
         description: 'This certificate is already in your list',
       });
@@ -62,11 +62,11 @@ const StudentDashboard: React.FC = () => {
     const result = await getCertificate(searchId.trim());
     
     if (result.isValid && result.certificate) {
-      const isValid = await verifyCertificate(searchId.trim());
+      const verified = await verifyCertificate(searchId.trim());
       
       setCertificates(prev => [...prev, {
         ...result.certificate!,
-        isValid,
+        verified,
       }]);
       
       setSearchId('');
@@ -82,8 +82,8 @@ const StudentDashboard: React.FC = () => {
     setIsSearching(false);
   }, [searchId, certificates, getCertificate, verifyCertificate]);
 
-  const handleRemoveCertificate = (certId: string) => {
-    setCertificates(prev => prev.filter(c => c.certificateID !== certId));
+  const handleRemoveCertificate = (certHash: string) => {
+    setCertificates(prev => prev.filter(c => c.certificateHash !== certHash));
     toast.success('Certificate removed from list');
   };
 
@@ -143,7 +143,7 @@ const StudentDashboard: React.FC = () => {
         <div className="mb-8 p-6 rounded-2xl bg-card border border-border/50">
           <h2 className="text-lg font-semibold mb-4">Find Your Certificate</h2>
           <p className="text-sm text-muted-foreground mb-4">
-            Enter your certificate ID to fetch it from the blockchain
+            Enter your certificate hash to fetch it from the blockchain
           </p>
           <div className="flex gap-2">
             <div className="relative flex-1">
@@ -151,7 +151,7 @@ const StudentDashboard: React.FC = () => {
               <Input
                 value={searchId}
                 onChange={(e) => setSearchId(e.target.value)}
-                placeholder="Enter Certificate ID (e.g., CERT-2024-001)"
+                placeholder="Enter Certificate Hash (e.g., CERT-2024-001)"
                 className="pl-10 h-12"
                 onKeyDown={(e) => e.key === 'Enter' && handleAddCertificate()}
               />
@@ -198,7 +198,7 @@ const StudentDashboard: React.FC = () => {
                 </div>
                 <div>
                   <p className="text-2xl font-bold">
-                    {certificates.filter(c => c.isValid).length}
+                    {certificates.filter(c => c.verified).length}
                   </p>
                   <p className="text-sm text-muted-foreground">Valid on Blockchain</p>
                 </div>
@@ -217,15 +217,15 @@ const StudentDashboard: React.FC = () => {
         ) : (
           <div className="grid md:grid-cols-2 gap-6">
             {certificates.map((cert) => (
-              <div key={cert.certificateID} className="relative group">
+              <div key={cert.certificateHash} className="relative group">
                 <div className="p-6 rounded-2xl bg-card border border-border/50 shadow-lg">
                   {/* Status Badge */}
                   <div className="flex items-center justify-between mb-4">
-                    <Badge variant={cert.isValid ? 'valid' : 'revoked'}>
-                      {cert.isValid ? 'VALID' : 'INVALID'}
+                    <Badge variant={cert.verified ? 'valid' : 'revoked'}>
+                      {cert.verified ? 'VALID' : 'INVALID'}
                     </Badge>
                     <span className="text-xs font-mono text-muted-foreground">
-                      {cert.certificateID}
+                      {cert.certificateHash}
                     </span>
                   </div>
 
@@ -268,9 +268,9 @@ const StudentDashboard: React.FC = () => {
                         variant="outline" 
                         size="sm" 
                         className="flex-1"
-                        onClick={() => handleCopyLink(cert.certificateID)}
+                        onClick={() => handleCopyLink(cert.certificateHash)}
                       >
-                        {copiedId === cert.certificateID ? (
+                        {copiedId === cert.certificateHash ? (
                           <Check className="w-4 h-4 mr-2" />
                         ) : (
                           <Copy className="w-4 h-4 mr-2" />
