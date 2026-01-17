@@ -1,7 +1,7 @@
 import { ethers } from "ethers";
 
 // 🔴 IMPORTANT: Update this address after deploying the new smart contract
-export const CONTRACT_ADDRESS = "0xE894bc126822B8FBbeD56133E27221a0fC74DAd3";
+export const CONTRACT_ADDRESS = "0x5688E1C9072620E0EC17b1076e91B657aAA19D9d";
 
 // Contract ABI - matches CertificateVerification.sol
 export const CONTRACT_ABI = [
