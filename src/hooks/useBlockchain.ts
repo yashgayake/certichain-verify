@@ -56,12 +56,25 @@ export const useBlockchain = () => {
   }, []);
 
   // Get read-only contract (no signer needed)
-  const getReadOnlyContract = useCallback(async (): Promise<Contract> => {
+  const getReadOnlyContract = useCallback(async (): Promise<{ provider: BrowserProvider; contract: Contract }> => {
     if (typeof window.ethereum === 'undefined') {
       throw new Error('MetaMask not installed');
     }
+
     const provider = new BrowserProvider(window.ethereum);
-    return new Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
+
+    // Detect wrong network / missing deployment early
+    const code = await provider.getCode(CONTRACT_ADDRESS);
+    if (!code || code === '0x') {
+      const network = await provider.getNetwork();
+      throw new Error(
+        `Contract not found on this network (chainId=${network.chainId}). ` +
+          `Switch MetaMask to the network where ${CONTRACT_ADDRESS} is deployed (Ganache usually chainId 5777 / RPC http://127.0.0.1:7545).`
+      );
+    }
+
+    const contract = new Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
+    return { provider, contract };
   }, []);
 
   // Get contract with signer (for write operations)
@@ -190,7 +203,7 @@ export const useBlockchain = () => {
     setError(null);
 
     try {
-      const contract = await getReadOnlyContract();
+      const { contract } = await getReadOnlyContract();
       const isValid = await contract.verifyCertificate(certificateHash);
       setIsLoading(false);
       return isValid;
@@ -208,17 +221,17 @@ export const useBlockchain = () => {
     setError(null);
 
     try {
-      const contract = await getReadOnlyContract();
-      
+      const { contract } = await getReadOnlyContract();
+
       const isValid = await contract.verifyCertificate(certificateHash);
-      
+
       if (!isValid) {
         setIsLoading(false);
         return { isValid: false, error: 'Certificate not found on blockchain' };
       }
 
       const result = await contract.getCertificate(certificateHash);
-      
+
       const certificate: BlockchainCertificate = {
         certificateHash,
         studentName: result[0],
@@ -246,10 +259,11 @@ export const useBlockchain = () => {
   // Get student details
   const getStudent = useCallback(async (enrollmentNumber: string): Promise<BlockchainStudent | null> => {
     try {
-      const contract = await getReadOnlyContract();
+      const { contract } = await getReadOnlyContract();
       const result = await contract.getStudent(enrollmentNumber);
-      
-      if (!result[4]) { // isRegistered check
+
+      if (!result[4]) {
+        // isRegistered check
         return null;
       }
 
@@ -273,7 +287,7 @@ export const useBlockchain = () => {
     password: string
   ): Promise<boolean> => {
     try {
-      const contract = await getReadOnlyContract();
+      const { contract } = await getReadOnlyContract();
       const isAuthenticated = await contract.authenticateStudent(enrollmentNumber, password);
       return isAuthenticated;
     } catch {
@@ -284,7 +298,7 @@ export const useBlockchain = () => {
   // Get student's certificates
   const getStudentCertificates = useCallback(async (enrollmentNumber: string): Promise<string[]> => {
     try {
-      const contract = await getReadOnlyContract();
+      const { contract } = await getReadOnlyContract();
       const certificateHashes = await contract.getStudentCertificates(enrollmentNumber);
       return certificateHashes;
     } catch {
@@ -295,7 +309,7 @@ export const useBlockchain = () => {
   // Check if student is registered
   const isStudentRegistered = useCallback(async (enrollmentNumber: string): Promise<boolean> => {
     try {
-      const contract = await getReadOnlyContract();
+      const { contract } = await getReadOnlyContract();
       return await contract.isStudentRegistered(enrollmentNumber);
     } catch {
       return false;
@@ -305,9 +319,9 @@ export const useBlockchain = () => {
   // Get all certificates (for admin)
   const getAllCertificates = useCallback(async (): Promise<BlockchainCertificate[]> => {
     try {
-      const contract = await getReadOnlyContract();
+      const { contract } = await getReadOnlyContract();
       const hashes = await contract.getAllCertificateHashes();
-      
+
       const certificates: BlockchainCertificate[] = [];
       for (const hash of hashes) {
         const result = await getCertificate(hash);
@@ -315,7 +329,7 @@ export const useBlockchain = () => {
           certificates.push(result.certificate);
         }
       }
-      
+
       return certificates;
     } catch {
       return [];
@@ -325,9 +339,9 @@ export const useBlockchain = () => {
   // Get all students (for admin)
   const getAllStudents = useCallback(async (): Promise<BlockchainStudent[]> => {
     try {
-      const contract = await getReadOnlyContract();
+      const { contract } = await getReadOnlyContract();
       const enrollments = await contract.getAllEnrollmentNumbers();
-      
+
       const students: BlockchainStudent[] = [];
       for (const enrollment of enrollments) {
         const student = await getStudent(enrollment);
@@ -335,7 +349,7 @@ export const useBlockchain = () => {
           students.push(student);
         }
       }
-      
+
       return students;
     } catch {
       return [];
@@ -345,7 +359,7 @@ export const useBlockchain = () => {
   // Get blockchain stats
   const getStats = useCallback(async (): Promise<{ totalCertificates: number; totalStudents: number }> => {
     try {
-      const contract = await getReadOnlyContract();
+      const { contract } = await getReadOnlyContract();
       const [totalCertificates, totalStudents] = await Promise.all([
         contract.getTotalCertificates(),
         contract.getTotalStudents(),
@@ -362,11 +376,13 @@ export const useBlockchain = () => {
   // Get admin address
   const getAdmin = useCallback(async (): Promise<string | null> => {
     try {
-      const contract = await getReadOnlyContract();
+      const { contract } = await getReadOnlyContract();
       const adminAddress = await contract.admin();
       return adminAddress;
-    } catch {
-      console.error('Failed to get admin');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to get admin';
+      console.error('Failed to get admin:', err);
+      toast.error('Admin check failed', { description: msg });
       return null;
     }
   }, [getReadOnlyContract]);
